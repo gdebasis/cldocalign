@@ -53,7 +53,10 @@ public class BOWTranslator {
         reader = DirectoryReader.open(FSDirectory.open(new File(inIndexPath).toPath()));
         
         // Load the dict in memory
-        dict = new Dictionary(Float.parseFloat(prop.getProperty("translation.threshold_weight", "0.01")));
+        dict = new Dictionary(
+                Integer.parseInt(prop.getProperty("numtranslated_words", "3")),                
+                Float.parseFloat(prop.getProperty("translation.threshold_weight", "0.01"))
+        );
         dict.load(prop.getProperty("dict"));
     }
     
@@ -61,10 +64,13 @@ public class BOWTranslator {
         final int numDocs = reader.numDocs();
         String docId;
         
-        for (int i = 0; i < numDocs; i++) {
+        int startDocId = Integer.parseInt(prop.getProperty("source.startdocid", "0"));
+        int endDocId = Integer.parseInt(prop.getProperty("source.enddocid", String.valueOf(numDocs)));
+        
+        for (int i = startDocId; i < endDocId; i++) {
             Document doc = reader.document(i);
             docId = doc.get(TextDocIndexer.FIELD_ID);
-            
+            System.out.println("Translating doc: " + docId);
             translate(docId, i);            
         }
         
@@ -77,6 +83,7 @@ public class BOWTranslator {
         BytesRef term;
         Terms tfvector;
         TermsEnum termsEnum;
+        int tf;
                 
         tfvector = reader.getTermVector(docId, TextDocIndexer.FIELD_ANALYZED_CONTENT);
         if (tfvector == null || tfvector.size() == 0)
@@ -87,8 +94,9 @@ public class BOWTranslator {
         StringBuffer buff = new StringBuffer();
         
     	while ((term = termsEnum.next()) != null) { // explore the terms for this field
-            termText = term.utf8ToString();            
-            buff.append(dict.getTranslations(termText)).append("\n");
+            tf = (int)termsEnum.totalTermFreq();            
+            termText = term.utf8ToString();                        
+            buff.append(dict.getTranslations(termText, tf)).append("\n");
         }
         
         Document doc = constructDoc(docIdStr, buff.toString());
@@ -106,7 +114,7 @@ public class BOWTranslator {
     public static void main(String[] args) {
         if (args.length == 0) {
             args = new String[1];
-            System.out.println("Usage: java TrecDocIndexer <prop-file>");
+            System.out.println("Usage: java BOWTranslator <prop-file>");
             args[0] = "init.properties";
         }
         

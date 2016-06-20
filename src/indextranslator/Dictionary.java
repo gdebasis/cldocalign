@@ -13,49 +13,25 @@ import retriever.PayloadAnalyzer;
  * @author dganguly
  */
 
-class TranslationInfo {
-    String word;
-    float weight;
-
-    public TranslationInfo(String line) {
-        String[] tokens = line.split("\\s+");
-        this.word = tokens[1];
-        this.weight = Float.parseFloat(tokens[2]);
-    }
-}
-
-class Translations {
-    String source;
-    List<TranslationInfo> tlist;
-    
-    public Translations(String source) {
-        this.source = source;
-        tlist = new ArrayList<>();
-    }
-    
-    public void addRecord(String line, float cutoff) {
-        TranslationInfo tinfo = new TranslationInfo(line);
-        if (tinfo.weight > cutoff)
-            tlist.add(new TranslationInfo(line));
-    }    
-    
-    @Override
-    public String toString() {
-        StringBuffer buff = new StringBuffer();
-        //buff.append(source).append("\t");
-        for (TranslationInfo tinfo : tlist) {
-            buff.append(tinfo.word).append(PayloadAnalyzer.delim).append(tinfo.weight).append(" ");
-        }
-        return buff.toString();
-    }    
-}
-
 public class Dictionary {
     float cutoff;
+    int numTranslations;
     Map<String, Translations> tmap;
 
-    public Dictionary(float cutoff) {        
-        tmap = new HashMap<>();        
+    public Dictionary(int numTranslations, float cutoff) {        
+        tmap = new HashMap<>();      
+        this.cutoff = cutoff;
+        this.numTranslations = numTranslations;
+    }
+    
+    // Trim the dictionary so that each word contains a max
+    // number of translation alternatives
+    protected void trim() {
+        for (Map.Entry<String, Translations> e : tmap.entrySet()) {
+            Translations t = e.getValue();
+            Collections.sort(t.tlist);
+            t.tlist = t.tlist.subList(0, Math.min(numTranslations, t.tlist.size()));
+        }
     }
     
     public void load(String inputFile) throws Exception {
@@ -76,7 +52,9 @@ public class Dictionary {
         }
         
         br.close();
-        fr.close();        
+        fr.close();
+        
+        trim();        
     }
     
     @Override
@@ -89,12 +67,21 @@ public class Dictionary {
         return buff.toString();
     }
     
-    public String getTranslations(String sourceWord) {
+    public String getTranslations(String sourceWord, int tf) {
         Translations tlist = tmap.get(sourceWord);
         if (tlist == null)
-            return "";
+            return sourceWord;
         
-        return tlist.toString();
+        return tlist.toString(tf);
+    }
+    
+    public Translations getTranslationTerms(String sourceWord) {
+        Translations t = tmap.get(sourceWord);
+        if (t != null)
+            return t;
+        t = new Translations(sourceWord);
+        t.addRecord(sourceWord + "\t" + sourceWord + " 1.0", cutoff); // hack to put the src word back onto itself (named entities e.g.)
+        return t;
     }
     
     public static void main(String[] args) {
@@ -105,7 +92,7 @@ public class Dictionary {
         }
         
         try {
-            Dictionary dict = new Dictionary(0.01f);
+            Dictionary dict = new Dictionary(3, 0.01f);
             dict.load(args[0]);
             System.out.println(dict);
         }

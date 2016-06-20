@@ -9,6 +9,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import org.apache.lucene.analysis.Analyzer;
@@ -99,6 +100,8 @@ public class TextDocIndexer {
 
     private void indexDirectory(File dir) throws Exception {
         File[] files = dir.listFiles();
+        Arrays.sort(files);
+        
         for (int i=0; i < files.length; i++) {
             File f = files[i];
             if (f.isDirectory()) {
@@ -144,7 +147,7 @@ public class TextDocIndexer {
     public static void main(String[] args) {
         if (args.length == 0) {
             args = new String[1];
-            System.out.println("Usage: java TrecDocIndexer <prop-file>");
+            System.out.println("Usage: java TextDocIndexer <prop-file>");
             args[0] = "init.properties";
         }
 
