@@ -8,19 +8,25 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
+import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Properties;
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.TokenStream;
 import org.apache.lucene.analysis.core.StopFilter;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StoredField;
 import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.util.BytesRef;
+import wvec.WordVecs;
 
 /**
  *
@@ -33,10 +39,11 @@ public class TextDocIndexer {
     IndexWriter writer;
     Analyzer analyzer;
     List<String> stopwords;
-    int pass;
+    int numClusters;
     
     static final public String FIELD_ID = "id";
     static final public String FIELD_ANALYZED_CONTENT = "words";  // Standard analyzer w/o stopwords.
+    static final public String FIELD_WORDVEC_CLUSTER_CENTRES = "clusters";  // Standard analyzer w/o stopwords.
 
     protected List<String> buildStopwordList(String stopwordFileName) {
         List<String> stopwords = new ArrayList<>();
@@ -67,6 +74,7 @@ public class TextDocIndexer {
         analyzer = constructAnalyzer();            
         String indexPath = prop.getProperty("index");        
         indexDir = new File(indexPath);
+        numClusters = Integer.parseInt(prop.getProperty("wvecs.numclusters", "5"));
     }
     
     public Analyzer getAnalyzer() { return analyzer; }
@@ -112,8 +120,30 @@ public class TextDocIndexer {
                 indexFile(f);
         }
     }
+
+    BytesRef getDocClusters(String id, String content) throws Exception {
+        StringBuffer tokenizedContentBuff = new StringBuffer();
+        TokenStream stream = analyzer.tokenStream(FIELD_ANALYZED_CONTENT, new StringReader(content));
+        CharTermAttribute termAtt = stream.addAttribute(CharTermAttribute.class);
+        stream.reset();
+
+        while (stream.incrementToken()) {
+            String term = termAtt.toString();
+            tokenizedContentBuff.append(term).append(" ");
+        }
+
+        stream.end();
+        stream.close();
+
+        // Form the document vector object
+        DocClusterer clusterer = new DocClusterer(
+                id, tokenizedContentBuff.toString(), numClusters);
+        String docVec = clusterer.getClusterVecs();
+        BytesRef docVecBytes = CompressionUtils.compress(docVec);
+        return docVecBytes;
+    }
     
-    Document constructDoc(String id, String content) throws IOException {
+    Document constructDoc(String id, String content) throws Exception {
         Document doc = new Document();
         doc.add(new Field(FIELD_ID, id, Field.Store.YES, Field.Index.NOT_ANALYZED));
 
@@ -121,6 +151,7 @@ public class TextDocIndexer {
         // the words (also store the term vector)
         doc.add(new Field(FIELD_ANALYZED_CONTENT, content,
                 Field.Store.YES, Field.Index.ANALYZED, Field.TermVector.YES));
+        doc.add(new StoredField(FIELD_WORDVEC_CLUSTER_CENTRES, getDocClusters(id, content)));
         
         return doc;
     }
@@ -152,6 +183,7 @@ public class TextDocIndexer {
         }
 
         try {
+            WordVecs.init(args[0]);
             TextDocIndexer indexer = new TextDocIndexer(args[0]);
             indexer.processAll();
         }

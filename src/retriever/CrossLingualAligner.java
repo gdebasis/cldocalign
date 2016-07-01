@@ -13,13 +13,13 @@ import indextranslator.Translations;
 import java.io.File;
 import java.io.FileReader;
 import java.io.FileWriter;
-import java.io.IOException;
 import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Collections;
-import java.util.Date;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,13 +43,14 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.TopDocsCollector;
 import org.apache.lucene.search.TopScoreDocCollector;
-import org.apache.lucene.search.similarities.BM25Similarity;
-import org.apache.lucene.search.similarities.LMDirichletSimilarity;
+import org.apache.lucene.search.highlight.QueryTermExtractor;
+import org.apache.lucene.search.highlight.WeightedTerm;
 import org.apache.lucene.search.similarities.LMJelinekMercerSimilarity;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
 import org.apache.lucene.store.RAMDirectory;
 import org.apache.lucene.util.BytesRef;
+import wvec.WordVecs;
 
 /**
  *
@@ -79,7 +80,7 @@ class TermStats implements Comparable<TermStats> {
     
     void computeWeight(int docLen, float lambda) {
         ntf = tf/(float)docLen;
-        wt = lambda*ntf + (1-lambda)*idf;
+        wt = (1-lambda)*ntf + lambda*idf;
     }
 
     @Override
@@ -90,19 +91,21 @@ class TermStats implements Comparable<TermStats> {
 }
 
 class DocStats {
-    List<TermStats> wordvec;
+    List<TermStats> termStats;
     int docId;
     Terms tfvector;
     IndexReader reader;
-    int numTopTerms;
+    float queryToDocRatio;
     float qSelLambda;
+    
+    static final int MAX_QUERY_TERMS = 512;
     
     DocStats(CrossLingualAligner aligner, int docId) {
         this.docId = docId;
         this.reader = aligner.enIndexReader;
-        wordvec = new ArrayList<>();
+        termStats = new ArrayList<>();
         
-        numTopTerms = Integer.parseInt(aligner.prop.getProperty("querysel.ntopterms", "20"));
+        queryToDocRatio = Float.parseFloat(aligner.prop.getProperty("querysel.q_to_d_ratio", "0.4"));
         qSelLambda = Float.parseFloat(aligner.prop.getProperty("querysel.lambda", "0.4"));
     }
     
@@ -135,16 +138,18 @@ class DocStats {
             if (isNumerical(termText))
                 continue;
             
-            wordvec.add(new TermStats(termText, tf, reader));
+            termStats.add(new TermStats(termText, tf, reader));
             docLen += tf;
         }
         
-        for (TermStats ts : wordvec) {
+        for (TermStats ts : termStats) {
             ts.computeWeight(docLen, qSelLambda);
         }
         
-        Collections.sort(wordvec);
-        return wordvec.subList(0, Math.min(numTopTerms, wordvec.size()));        
+        Collections.sort(termStats);
+        int numTopTerms = (int)(queryToDocRatio*termStats.size());
+        numTopTerms = Math.min(numTopTerms, MAX_QUERY_TERMS);
+        return termStats.subList(0, numTopTerms);        
     }
     
 }
@@ -161,20 +166,31 @@ public class CrossLingualAligner {
     Dictionary dict;
     int shift;
     String prefix;
-            
+    boolean temporalConstraint;
+    float lambda;
+    boolean useVecSim;
+    float textSimWt;
+    
+    static final int numWanted = 10;
+                
     public CrossLingualAligner(String propFile) throws Exception {
         prop = new Properties();
         prop.load(new FileReader(propFile));
         
-        queryTranslation = Boolean.parseBoolean(prop.getProperty("qry.translation", "true"));
-                
+        queryTranslation = Boolean.parseBoolean(prop.getProperty("qry.translation", "true"));        
+        temporalConstraint = Boolean.parseBoolean(prop.getProperty("retrieve.temporal_constraint", "false"));
+        lambda = Float.parseFloat(prop.getProperty("querysel.lambda", "0.4"));
+        useVecSim = Boolean.parseBoolean(prop.getProperty("retrieve.vecsim", "true"));
+        
         String enIndexPath = prop.getProperty("index"); // query index
         String frIndexPath = prop.getProperty("translated.index"); // search index
         
         enIndexReader = DirectoryReader.open(FSDirectory.open(new File(enIndexPath).toPath()));
         frIndexReader = DirectoryReader.open(FSDirectory.open(new File(frIndexPath).toPath()));
+        
         frIndexSearcher = new IndexSearcher(frIndexReader);
-
+        frIndexSearcher.setSimilarity(new LMJelinekMercerSimilarity(1-lambda));
+        
         // Get the prefix
         prefix = frIndexReader.document(0)
                             .get(TextDocIndexer.FIELD_ID)
@@ -185,10 +201,11 @@ public class CrossLingualAligner {
                     Integer.parseInt(prop.getProperty("numtranslated_words", "3")),
                     Float.parseFloat(prop.getProperty("translation.threshold_weight", "0.01"))
             );
-            System.out.println("Loading dict for query tranalation...");
+            System.out.println("Loading dict for query translation...");
             dict.load(prop.getProperty("dict"));            
         }
         shift = Integer.parseInt(prop.getProperty("retrieve.temporal_search_window", "10"));
+        this.textSimWt = Float.parseFloat(prop.getProperty("simscore.textsim", "0.6"));        
     }
     
     IndexSearcher buildTemporalIndexSearcher(IndexReader reader) throws Exception {
@@ -233,7 +250,7 @@ public class CrossLingualAligner {
         frIndexReader.close();
     }
 
-    List<TermStats> getTranslatedQueryTerms(TermStats termStats) throws Exception {
+    public List<TermStats> getTranslatedQueryTerms(TermStats termStats) throws Exception {
         List<TermStats> qterms = new ArrayList<>();
         
         Translations translatedTerms = dict.getTranslationTerms(termStats.term);
@@ -247,9 +264,8 @@ public class CrossLingualAligner {
         return qterms;
     }
     
-    Query constructQuery(int docId) throws Exception {
+    public Query constructQuery(int docId) throws Exception {
         BooleanQuery q = new BooleanQuery();
-
         DocStats docStats = new DocStats(this, docId);
         List<TermStats> termsStatsList = docStats.build();
         
@@ -265,8 +281,7 @@ public class CrossLingualAligner {
         }
         
         return q;        
-    }
-    
+    }    
     
     Query constructTranslatedQuery(int docId) throws Exception {
         HashMap<String, TermStats> qmap = new HashMap<>();
@@ -290,8 +305,11 @@ public class CrossLingualAligner {
                 seen.tf += translatedTermStats.tf;                
             }
         }
-        
-        for (Map.Entry<String, TermStats> e : qmap.entrySet()) {            
+
+        int count = 0;
+        for (Map.Entry<String, TermStats> e : qmap.entrySet()) {
+            if (count++ >= DocStats.MAX_QUERY_TERMS)
+                break;
             TermStats ts = e.getValue();
             Term queryTerm = new Term(TextDocIndexer.FIELD_ANALYZED_CONTENT, ts.term);
             TermQuery tq = new TermQuery(queryTerm);
@@ -377,12 +395,75 @@ public class CrossLingualAligner {
         writer.close();
         return writer.getDirectory();        
     }
+
+    ScoreDoc[] normalize(ScoreDoc[] sd, boolean sorted) {
+        ScoreDoc[] normalizedScoreDocs = new ScoreDoc[sd.length];
+        for (int i=0; i < sd.length; i++) {
+            normalizedScoreDocs[i] = new ScoreDoc(sd[i].doc, sd[i].score);
+        }
+        
+        float maxScore = 0;
+        float sumScore = 0;
+        
+        for (int i=0; i < sd.length; i++) {
+            if (sd[i].score > maxScore)
+                maxScore = sd[i].score;
+            sumScore += sd[i].score;
+        }
+        
+        for (int i=0; i < sd.length; i++) {
+            //normalizedScoreDocs[i].score = sd[i].score/maxScore;
+            normalizedScoreDocs[i].score = sd[i].score/sumScore;
+        }
+        return normalizedScoreDocs;
+    }
+    
+    
+    // Try combining similarities in different ways.
+    ScoreDoc[] combineSimilarities(ScoreDoc[] txtScores, ScoreDoc[] wvecScores) {
+        // Normalize the scores
+        ScoreDoc[] nTxtScores = normalize(txtScores, true);
+        ScoreDoc[] nwvecScores = normalize(wvecScores, false);
+        
+        for (int i=0; i < txtScores.length; i++) {
+            nTxtScores[i].score = this.textSimWt*nTxtScores[i].score +
+                                (1-textSimWt)*nwvecScores[i].score;
+        }
+        
+        Arrays.sort(nTxtScores, new ScoreDocComparator());
+        
+        // Constitute the sublist
+        int nwanted = 1;
+        ScoreDoc[] topWanted = new ScoreDoc[nwanted];
+        System.arraycopy(nTxtScores, 0, topWanted, 0, nwanted);
+        
+        return topWanted;
+    }
+    
+    
+    TopDocs rerankTopDocsByWordVecSim(Query query, TopDocs topDocs) throws Exception {
+        // Compute doc-query vector based similarities
+        WeightedTerm[] qterms = QueryTermExtractor.getTerms(query);        
+        DocVecSimilarity dvecSim = new DocVecSimilarity(prop, frIndexReader, topDocs, qterms, textSimWt);
+        ScoreDoc[] wvecScoreDocs = dvecSim.computeSims();
+
+        // Combine the similarity scores of the wvecs and the text
+        ScoreDoc[] combinedScoreDocs = combineSimilarities(topDocs.scoreDocs, wvecScoreDocs);
+
+        TopDocs rerankedTopDocs = new TopDocs(
+                topDocs.scoreDocs.length, combinedScoreDocs, combinedScoreDocs[0].score);
+        
+        return rerankedTopDocs;
+    }
     
     // Returns the doc-id of the aligned doc
     String align(int docId) throws Exception {
         
         TopScoreDocCollector collector;
         TopDocs topDocs;
+        IndexReader reader;
+        IndexSearcher searcher;
+        Directory inMemTemporalIndex = null;
         
         Query q = queryTranslation? constructTranslatedQuery(docId) : constructQuery(docId);
         if (q == null)
@@ -390,27 +471,41 @@ public class CrossLingualAligner {
         
         System.out.println("Querying with: " + q);
         
-        Directory inMemTemporalIndex = buildTemporalIndex(docId);
-        IndexReader ramDirReader = DirectoryReader.open(inMemTemporalIndex);
-        IndexSearcher searcher = buildTemporalIndexSearcher(ramDirReader);
-        
-        collector = TopScoreDocCollector.create(1);
+        if (temporalConstraint) {
+            inMemTemporalIndex = buildTemporalIndex(docId);
+            IndexReader ramDirReader = DirectoryReader.open(inMemTemporalIndex);
+            reader = ramDirReader;
+            searcher = buildTemporalIndexSearcher(reader);
+        }
+        else {
+            reader = frIndexReader;
+            searcher = frIndexSearcher;
+        }
+                
+        collector = TopScoreDocCollector.create(numWanted);
         searcher.search(q, collector);
         
-        topDocs = collector.topDocs();
-        ScoreDoc[] hits = topDocs.scoreDocs;
+        topDocs = collector.topDocs();        
         
-        if (hits.length == 0) {
-            ramDirReader.close();
-            inMemTemporalIndex.close();
+        if (topDocs.scoreDocs.length == 0) {
+            if (temporalConstraint) {
+                reader.close();
+                inMemTemporalIndex.close();
+            }
             return null;
         }
         
-        Document alignedDoc = ramDirReader.document(hits[0].doc);
+        if (textSimWt < 1) {
+            topDocs = rerankTopDocsByWordVecSim(q, topDocs);  // rerank by termStats sims
+        }
+
+        Document alignedDoc = reader.document(topDocs.scoreDocs[0].doc);
         String alignedDocId = alignedDoc.get(TextDocIndexer.FIELD_ID);
         
-        ramDirReader.close();
-        inMemTemporalIndex.close();
+        if (temporalConstraint) {
+            reader.close();
+            inMemTemporalIndex.close();
+        }
                 
         return alignedDocId;
     }
@@ -418,11 +513,12 @@ public class CrossLingualAligner {
     public static void main(String[] args) {
         if (args.length == 0) {
             args = new String[1];
-            System.out.println("Usage: java TrecDocIndexer <prop-file>");
+            System.out.println("Usage: java CrossLingualAligner <prop-file>");
             args[0] = "init.properties";
         }
         
         try {
+            WordVecs.init(args[0]);
             CrossLingualAligner aligner = new CrossLingualAligner(args[0]);
             aligner.alignAll();            
             Evaluator eval = new Evaluator(args[0]);
@@ -430,5 +526,13 @@ public class CrossLingualAligner {
         }
         catch (Exception ex) { ex.printStackTrace(); }
         
+    }
+}
+
+class ScoreDocComparator implements Comparator<ScoreDoc> {
+
+    @Override
+    public int compare(ScoreDoc thisSd, ScoreDoc thatSd) {
+        return -1*Float.compare(thisSd.score, thatSd.score);  // descending
     }
 }
