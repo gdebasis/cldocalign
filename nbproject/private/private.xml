@@ -3,9 +3,13 @@
     <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
     <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
         <group>
-            <file>file:/mnt/sdb2/research/DocumentAligner/src/retriever/PayloadAnalyzer.java</file>
-            <file>file:/mnt/sdb2/research/DocumentAligner/init.properties</file>
-            <file>file:/mnt/sdb2/research/DocumentAligner/src/indextranslator/BOWTranslator.java</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/src/retriever/CrossLingualAligner.java</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/src/vectorizer/Doc2Vec.java</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/src/indexer/TextDocIndexer.java</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/init.properties</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/init.linux.properties</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/src/vectorizer/LuceneDocFetcher.java</file>
+            <file>file:/C:/research/DocumentAligner/DocumentAligner/src/indextranslator/Dictionary.java</file>
         </group>
     </open-files>
 </project-private>
