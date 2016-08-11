@@ -6,7 +6,7 @@ start=`date +%s`
 
 if [ $# -lt 1 ]
 then
-    echo "usage $0 <en/fr/de>"
+    echo "usage $0 <en/fr>"
     exit
 fi
 
