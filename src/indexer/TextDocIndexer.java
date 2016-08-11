@@ -40,6 +40,7 @@ public class TextDocIndexer {
     Analyzer analyzer;
     List<String> stopwords;
     int numClusters;
+	String filesToIndexList;
     
     static final public String FIELD_ID = "id";
     static final public String FIELD_ANALYZED_CONTENT = "words";  // Standard analyzer w/o stopwords.
@@ -74,7 +75,8 @@ public class TextDocIndexer {
         analyzer = constructAnalyzer();            
         String indexPath = prop.getProperty("index");        
         indexDir = new File(indexPath);
-        numClusters = Integer.parseInt(prop.getProperty("wvecs.numclusters", "5"));
+        numClusters = Integer.parseInt(prop.getProperty("wvecs.numclusters", "0"));
+		filesToIndexList = prop.getProperty("indexlist");
     }
     
     public Analyzer getAnalyzer() { return analyzer; }
@@ -82,7 +84,7 @@ public class TextDocIndexer {
     public Properties getProperties() { return prop; }
     
     void processAll() throws Exception {
-        System.out.println("Indexing TREC collection...");
+        System.out.println("Indexing documents...");
         
         IndexWriterConfig iwcfg = new IndexWriterConfig(analyzer);
         iwcfg.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
@@ -101,10 +103,30 @@ public class TextDocIndexer {
             System.err.println("Skipping indexing... Index already exists at " + indexDir.getName() + "!!");
             return;
         }
+
+		if (filesToIndexList == null) {
         
-        File topDir = new File(prop.getProperty("coll"));
-        indexDirectory(topDir);
+        	File topDir = new File(prop.getProperty("coll"));
+        	indexDirectory(topDir);
+		}
+		else {
+			indexFileList();
+		}
     }
+
+	void indexFileList() throws Exception {
+		FileReader fr = new FileReader(filesToIndexList);
+		BufferedReader br = new BufferedReader(fr);
+		String line;
+
+		while ((line = br.readLine()) != null) {
+			System.out.println("Indexing file: " + line);
+			indexFile(new File(line));
+		}
+
+		br.close();
+		fr.close();
+	}
 
     private void indexDirectory(File dir) throws Exception {
         File[] files = dir.listFiles();
@@ -142,6 +164,8 @@ public class TextDocIndexer {
         BytesRef docVecBytes = CompressionUtils.compress(docVec);
         return docVecBytes;
     }
+
+	int getNumClusters() { return numClusters; }
     
     Document constructDoc(String id, String content) throws Exception {
         Document doc = new Document();
@@ -151,7 +175,9 @@ public class TextDocIndexer {
         // the words (also store the term vector)
         doc.add(new Field(FIELD_ANALYZED_CONTENT, content,
                 Field.Store.YES, Field.Index.ANALYZED, Field.TermVector.YES));
-        doc.add(new StoredField(FIELD_WORDVEC_CLUSTER_CENTRES, getDocClusters(id, content)));
+
+		if (numClusters > 0)
+        	doc.add(new StoredField(FIELD_WORDVEC_CLUSTER_CENTRES, getDocClusters(id, content)));
         
         return doc;
     }
@@ -183,8 +209,9 @@ public class TextDocIndexer {
         }
 
         try {
-            WordVecs.init(args[0]);
             TextDocIndexer indexer = new TextDocIndexer(args[0]);
+			if (indexer.getNumClusters() > 0)
+            	WordVecs.init(args[0]);
             indexer.processAll();
         }
         catch (Exception ex) {
