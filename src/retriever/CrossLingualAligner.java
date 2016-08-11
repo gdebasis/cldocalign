@@ -80,7 +80,7 @@ class TermStats implements Comparable<TermStats> {
     
     void computeWeight(int docLen, float lambda) {
         ntf = tf/(float)docLen;
-        wt = (1-lambda)*ntf + lambda*idf;
+        wt = lambda*ntf + (1-lambda)*idf;
     }
 
     @Override
@@ -97,14 +97,14 @@ class DocStats {
     IndexReader reader;
     float queryToDocRatio;
     float qSelLambda;
-    
-    static final int MAX_QUERY_TERMS = 512;
+    static int MAX_QUERY_TERMS;
     
     DocStats(CrossLingualAligner aligner, int docId) {
         this.docId = docId;
         this.reader = aligner.enIndexReader;
         termStats = new ArrayList<>();
-        
+        BooleanQuery.setMaxClauseCount(8192);
+        MAX_QUERY_TERMS = BooleanQuery.getMaxClauseCount();
         queryToDocRatio = Float.parseFloat(aligner.prop.getProperty("querysel.q_to_d_ratio", "0.4"));
         qSelLambda = Float.parseFloat(aligner.prop.getProperty("querysel.lambda", "0.4"));
     }
@@ -161,7 +161,6 @@ public class CrossLingualAligner {
     IndexReader frIndexReader;
     IndexSearcher frIndexSearcher;
     FileWriter fw;
-    
     boolean queryTranslation;
     Dictionary dict;
     int shift;
@@ -225,6 +224,9 @@ public class CrossLingualAligner {
     public void alignAll() throws Exception {
         
         fw = new FileWriter(prop.getProperty("out.align.file"));
+            
+        
+        
         final int numDocs = enIndexReader.numDocs();
         
         int startDocId = Integer.parseInt(prop.getProperty("source.startdocid", "0"));
@@ -239,7 +241,6 @@ public class CrossLingualAligner {
                 continue;
             
             String line = docId + "\t" + alignedDocId;
-            System.out.println(line);
             fw.write(line + "\n");
             fw.flush();
         }
@@ -369,7 +370,6 @@ public class CrossLingualAligner {
         
         // construct a range query
         BooleanQuery dateWildCardQuery = constructDateQuery(refDate);
-        System.out.println(dateWildCardQuery);
 
         int numDatesInRange = ((shift<<1)+1)*perDay;
         TopDocsCollector collector = TopScoreDocCollector.create(numDatesInRange);
@@ -420,14 +420,16 @@ public class CrossLingualAligner {
     
     
     // Try combining similarities in different ways.
-    ScoreDoc[] combineSimilarities(ScoreDoc[] txtScores, ScoreDoc[] wvecScores) {
+    ScoreDoc[] combineSimilarities(ScoreDoc[] txtScores, ScoreDoc[] wvecScores) throws Exception { 
         // Normalize the scores
         ScoreDoc[] nTxtScores = normalize(txtScores, true);
         ScoreDoc[] nwvecScores = normalize(wvecScores, false);
         
+        
         for (int i=0; i < txtScores.length; i++) {
             nTxtScores[i].score = this.textSimWt*nTxtScores[i].score +
-                                (1-textSimWt)*nwvecScores[i].score;
+                                (1-textSimWt)*nwvecScores[i].score;       
+              
         }
         
         Arrays.sort(nTxtScores, new ScoreDocComparator());
@@ -468,8 +470,6 @@ public class CrossLingualAligner {
         Query q = queryTranslation? constructTranslatedQuery(docId) : constructQuery(docId);
         if (q == null)
             return null;
-        
-        System.out.println("Querying with: " + q);
         
         if (temporalConstraint) {
             inMemTemporalIndex = buildTemporalIndex(docId);
