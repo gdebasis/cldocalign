@@ -158,7 +158,7 @@ public class WordVecsIndexer {
         }
 
         try {
-            WordVecsIndexer wvIndexer = new WordVecsIndexer("init.properties");
+            WordVecsIndexer wvIndexer = new WordVecsIndexer(args[0]);
             wvIndexer.writeIndex();
         }
         catch (Exception ex) { ex.printStackTrace(); }
