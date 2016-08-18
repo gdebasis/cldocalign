@@ -1,6 +1,4 @@
 # cldocalign
-
-cldocalign
 =========
 A bilingual comparable document alignment tool
 
