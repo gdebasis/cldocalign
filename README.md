@@ -29,7 +29,9 @@ Set the paths of these jars in your "~/.bashrc" file
 Extract the following files in the "euronews-data" directory to get the following resources:
 
 i) Extract "dict.fr-en.txt.tar.gz" to get French-to-English dictionary ("dict.fr-en.txt")
+
 ii) Extract "en.tar.gz" and "fr.tar.gz" to get a collection of English and French documents and
+
 iii) Extract "fr-en.align.ref.tar.gz" to get the reference alignment from French to English ("fr-en.align.ref") as we consider French to be the source language and English to be the target language.
 
 
